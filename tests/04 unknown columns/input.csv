@@ -1,0 +1,2 @@
+packageName,address,outFileName,extraColumn
+my-package,http://example.com,out.zip,something

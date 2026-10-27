@@ -1,0 +1,2 @@
+packageName,address,outFileName,maxDepth
+my-package,http://example.com,out.zip,abc

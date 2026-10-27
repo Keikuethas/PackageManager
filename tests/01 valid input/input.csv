@@ -1,0 +1,2 @@
+packageName,address,repositoryType,outFileName,tree,maxDepth
+my-package,http://example.com,URL,out.zip,true,5
