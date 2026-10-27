@@ -41,14 +41,15 @@ tasks.test {
 tasks.register<Exec>("customJpackage") {
     dependsOn("installDist")
 
-    // Находим jpackage из нужной JDK (25), чтобы не зависеть от PATH
     val javaToolchains = project.extensions.getByType(JavaToolchainService::class.java)
     val jdkLauncher = javaToolchains.launcherFor {
         languageVersion.set(JavaLanguageVersion.of(25))
     }.get()
-    val jpackageExec = jdkLauncher.metadata.installationPath.dir("bin").file("jpackage").asFile.absolutePath
+    val jpackageExec = jdkLauncher.metadata.installationPath.dir("bin")
+        .file("jpackage").asFile.absolutePath
 
-    val installDir = layout.buildDirectory.dir("install/${application.applicationName}").get().asFile
+    val installDir = layout.buildDirectory
+        .dir("install/${application.applicationName}").get().asFile
     val libDir = installDir.resolve("lib")
     workingDir = libDir
 
