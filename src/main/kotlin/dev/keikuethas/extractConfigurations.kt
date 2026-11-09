@@ -8,10 +8,8 @@ import kotlin.io.path.readText
 
 @OptIn(ExperimentalSerializationApi::class)
 fun extractConfigurations(path: Path): List<Configuration> {
-    val csv = Csv { hasHeaderRecord = true }
-
     val csvContent = path.readText()
-
+    val csv = Csv { hasHeaderRecord = true }
     return csv.decodeFromString(
         ListSerializer(Configuration.serializer()),
         csvContent

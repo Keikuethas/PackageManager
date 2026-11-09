@@ -7,9 +7,9 @@ data class Configuration(
     val packageName: String,
     val address: String,
     val repositoryType: RepositoryType = RepositoryType.URL,
-    val outFileName: String,
+    val outFileName: String = "output.png",
     val tree: Boolean = false,
-    val maxDepth: UInt = 1.toUInt()
+    val maxDepth: Int = 1
 )
 
-enum class RepositoryType { URL, FILE }
+enum class RepositoryType { URL, TEST }
