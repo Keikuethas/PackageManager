@@ -12,10 +12,8 @@ class CLIMain : CliktCommand() {
     override fun run() {
         try {
             val configs = extractConfigurations(path)
-            configs.forEach { config ->
-                config.print()
-                println()
-            }
+            val results = processConfigurations(configs)
+            printResults(results)
         } catch (e: Exception) {
             echo("Error: ${path.toAbsolutePath()} - ${exToText(e)}")
         }
