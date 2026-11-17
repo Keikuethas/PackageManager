@@ -36,6 +36,10 @@ class CLIMain : CliktCommand() {
     val runDir: Path? by option("--dir", hidden = true)
         .path(mustExist = true, mustBeReadable = true, canBeDir = true, canBeFile = false)
 
+    val revDep: String? by option(
+        "--rev",
+        help = "Package to show reverse dependencies for (default null)"
+    )
 
     override fun run() {
         try {
@@ -46,7 +50,7 @@ class CLIMain : CliktCommand() {
                 limits,
                 initDir
             )
-            printResults(results)
+            printResults(results, revDep)
         } catch (e: Exception) {
             echo("Error: ${dataPath.toAbsolutePath()} - ${exToText(e)}")
         }
