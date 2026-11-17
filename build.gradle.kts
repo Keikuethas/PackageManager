@@ -47,9 +47,11 @@ tasks.register<Exec>("customJpackage") {
     val jdkLauncher = javaToolchains.launcherFor {
         languageVersion.set(JavaLanguageVersion.of(25))
     }.get()
-    val jpackageExec = jdkLauncher.metadata.installationPath.dir("bin").file("jpackage").asFile.absolutePath
+    val jpackageExec = jdkLauncher.metadata.installationPath.dir("bin")
+        .file("jpackage").asFile.absolutePath
 
-    val installDir = layout.buildDirectory.dir("install/${application.applicationName}").get().asFile
+    val installDir = layout.buildDirectory
+        .dir("install/${application.applicationName}").get().asFile
     val libDir = installDir.resolve("lib")
     workingDir = libDir
 
