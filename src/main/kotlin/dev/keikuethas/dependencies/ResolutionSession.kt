@@ -41,17 +41,30 @@ class ResolutionSession(
 
     private fun getUnresolvedDependencies(rootPom: PomDocument) {
         rootPom.directDependencies
-            .filter { it.version == null || it.scope == null }
+            .filter { dep ->
+
+                val scope = dep.scope ?: "compile"
+                if (scope != "compile") return@filter false
+
+                dep.version == null ||
+                        dep.scope == null ||
+                        PropertyExpander.containsUnresolved(dep.version) ||
+                        PropertyExpander.containsUnresolved(dep.scope)
+            }
             .mapTo(needed) { it.key }
     }
 
     private fun processLoadQueue(): Boolean {
         while (true) {
-            if (needed.all { localDM[it]?.resolvedVersion != null }) return true
+            if (needed.isNotEmpty() && needed.all { localDM[it]?.resolvedVersion != null }) {
+                return true
+            }
+
             if (ctx.loads >= ctx.limits.maxLoads) {
                 limitExceeded("Download limit ${ctx.limits.maxLoads} exceeded", null)
                 return false
             }
+
             val task = pollTask() ?: return false
             val pom = fetchPom(task.coords) ?: continue
             handleTask(pom, task)
@@ -59,7 +72,7 @@ class ResolutionSession(
     }
 
     private fun loadRoot(rootPom: PomDocument, root: Coordinates) {
-        loadBuiltInProperties(rootPom, root)
+        properties.putAll(loadBuiltInProperties(rootPom, root))
         processPomContent(rootPom, root)
         enqueueChildren(
             pom = rootPom,
@@ -117,7 +130,9 @@ class ResolutionSession(
                 onPropertyAdded(name)
             }
         }
+
         for (dep in pom.managedDependencies.value) {
+            if (dep.key !in needed) continue
             if (dep.key in localDM) continue
             val entry = ManagedEntry(dep.version, dep.scope, coords, depth)
 
@@ -126,15 +141,22 @@ class ResolutionSession(
                     localDM[dep.key] = it
             } ?: run { localDM[dep.key] = entry }
 
-            localDM[dep.key]?.rawVersion?.let {
-                if (PropertyExpander.containsUnresolved(it))
-                    registerSlot(SlotRef(dep.key, Field.VERSION, it))
-            } ?: localDM[dep.key]?.let { it.resolvedVersion = it.rawVersion }
-
             localDM[dep.key]?.rawScope?.let {
                 if (PropertyExpander.containsUnresolved(it))
                     registerSlot(SlotRef(dep.key, Field.SCOPE, it))
             } ?: localDM[dep.key]?.let { it.resolvedScope = it.rawScope }
+
+            if (
+                localDM[dep.key] != null &&
+                (
+                        localDM[dep.key]!!.resolvedScope == null ||
+                                localDM[dep.key]!!.resolvedScope == "compile")
+            ) {
+                localDM[dep.key]?.rawVersion?.let {
+                    if (PropertyExpander.containsUnresolved(it))
+                        registerSlot(SlotRef(dep.key, Field.VERSION, it))
+                } ?: localDM[dep.key]?.let { it.resolvedVersion = it.rawVersion }
+            }
         }
     }
 
@@ -168,22 +190,24 @@ class ResolutionSession(
         importLevel: Int
     ) {
         if (imp.version == null) {
-            ctx.diagnostics.add(
-                Diagnostic.ImportUnresolved(
-                    "Import ${imp.key} with no version in $coords", coords
+            if (imp.scope == null || imp.scope == "compile")
+                ctx.diagnostics.add(
+                    Diagnostic.ImportUnresolved(
+                        "Import ${imp.key} with no version in $coords", coords
+                    )
                 )
-            )
             return
         }
         val c = expandCoords(imp.groupId, imp.artifactId, imp.version)
-        if (c == null)
-            ctx.diagnostics.add(
-                Diagnostic.ImportUnresolved(
-                    "Failed to resolve coordinates for import ${imp.key} in $coords",
-                    coords
+        if (c == null) {
+            if (imp.scope == null || imp.scope == "compile")
+                ctx.diagnostics.add(
+                    Diagnostic.ImportUnresolved(
+                        "Failed to resolve coordinates for import ${imp.key} in $coords",
+                        coords
+                    )
                 )
-            )
-        else
+        } else
             enqueue(c, TraversalPriority.IMPORT, 0, importLevel + 1)
     }
 
@@ -296,7 +320,7 @@ class ResolutionSession(
                 )
             )
         }
-        return ResolutionResult(resolved.filter {it.scope == "compile"}, unresolved.filter {it.scope == "compile"})
+        return ResolutionResult(resolved.filter { it.scope == "compile" }, unresolved.filter { it.scope == "compile" })
     }
 
     private fun finalizeDependency(

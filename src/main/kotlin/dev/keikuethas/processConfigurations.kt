@@ -26,7 +26,9 @@ fun processConfigurations(
         when (config.repositoryType) {
             RepositoryType.URL -> {
                 val repoUrl = config.toRepoUrl()
-                val context = contexts.getOrPut(repoUrl) { ResolutionContext(repoUrl, limits, config.maxDepth) }
+                val context = contexts.getOrPut(repoUrl) {
+                    ResolutionContext(repoUrl, limits, config.maxDepth)
+                }
 
                 val coords = try {
                     config.toCoordinates()
