@@ -17,6 +17,7 @@ dependencies {
     implementation("de.brudaswen.kotlinx.serialization:kotlinx-serialization-csv:3.2.2")
     implementation("com.github.ajalt.clikt:clikt:5.1.0")
     implementation("io.arrow-kt:arrow-core:1.2.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
 }
 
 kotlin {
@@ -42,7 +43,6 @@ tasks.test {
 tasks.register<Exec>("customJpackage") {
     dependsOn("installDist")
 
-    // Находим jpackage из нужной JDK (25), чтобы не зависеть от PATH
     val javaToolchains = project.extensions.getByType(JavaToolchainService::class.java)
     val jdkLauncher = javaToolchains.launcherFor {
         languageVersion.set(JavaLanguageVersion.of(25))

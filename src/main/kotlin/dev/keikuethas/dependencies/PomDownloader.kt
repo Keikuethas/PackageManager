@@ -54,9 +54,8 @@ class PomDownloader(
 
     private fun getUrl(coords: Coordinates): String {
         val groupPath = coords.groupId.replace('.', '/')
-        val classifierPart = coords.classifier?.let { "-$it" } ?: ""
         val url = "${repoUrl.trimEnd('/')}/$groupPath/${coords.artifactId}/${coords.version}/" +
-                "${coords.artifactId}-${coords.version}$classifierPart.pom"
+                "${coords.artifactId}-${coords.version}.pom"
 
         return url
     }

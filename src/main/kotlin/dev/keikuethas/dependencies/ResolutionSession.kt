@@ -2,36 +2,42 @@ package dev.keikuethas.dependencies
 
 import arrow.core.Either
 import arrow.core.separateEither
-import dev.keikuethas.dependencies.mavenresolver.PropertyExpander
 import java.util.*
 
-class ResolutionSession(private val ctx: ResolutionContext) {
-
-    private val properties = mutableMapOf<String, String>()
-    private val managedDeps = mutableMapOf<String, ManagedEntry>()
+class ResolutionSession(
+    private val ctx: ResolutionContext,
+    private val depth: Int
+) {
+    private val localDM = mutableMapOf<String, ManagedEntry>()
+    private val properties: MutableMap<String, String> = mutableMapOf()
     private val pendingProps = mutableMapOf<String, MutableList<SlotRef>>()
     private val needed = mutableSetOf<String>()
     private val visited = mutableSetOf<String>()
     private val queuedPriority = mutableMapOf<String, TraversalPriority>()
     private val queue = PriorityQueue<LoadTask>()
-    private val diagnostics = mutableListOf<Diagnostic>()
     private var seq = 0L
-    private var loads = 0
     private var rootCoords: Coordinates? = null
 
-    fun resolve(root: Coordinates): ResolutionResult {
-        reset()
+    fun resolve(
+        root: Coordinates,
+    ): ResolutionResult {
         rootCoords = root
         visited.add(root.toString())
-
         val rootPom = fetchPom(root)
-            ?: return ResolutionResult(emptyList(), emptyList(), diagnostics)
+            ?: return ResolutionResult(emptyList(), emptyList())
         loadRoot(rootPom, root)
 
         getUnresolvedDependencies(rootPom)
         processLoadQueue()
+
         return finalize(rootPom.directDependencies, root)
     }
+
+    fun getResolvedVersions() =
+        localDM.filterValues {
+            it.resolvedVersion != null &&
+                    (it.resolvedScope == null || it.resolvedScope == "compile")
+        }
 
     private fun getUnresolvedDependencies(rootPom: PomDocument) {
         rootPom.directDependencies
@@ -39,18 +45,14 @@ class ResolutionSession(private val ctx: ResolutionContext) {
             .mapTo(needed) { it.key }
     }
 
-    private fun processLoadQueue() {
+    private fun processLoadQueue(): Boolean {
         while (true) {
-            if (needed.all { managedDeps[it]?.resolvedVersion != null }) break
-            if (loads >= ctx.limits.maxLoads) {
-                diagnostics.add(
-                    Diagnostic.LimitExceeded(
-                        "Download limit ${ctx.limits.maxLoads} exceeded", null
-                    )
-                )
-                break
+            if (needed.all { localDM[it]?.resolvedVersion != null }) return true
+            if (ctx.loads >= ctx.limits.maxLoads) {
+                limitExceeded("Download limit ${ctx.limits.maxLoads} exceeded", null)
+                return false
             }
-            val task = pollTask() ?: break
+            val task = pollTask() ?: return false
             val pom = fetchPom(task.coords) ?: continue
             handleTask(pom, task)
         }
@@ -73,13 +75,6 @@ class ResolutionSession(private val ctx: ResolutionContext) {
         enqueueChildren(pom, task.coords, task.parentLevel, task.importLevel, task.priority)
     }
 
-    private fun reset() {
-        properties.clear(); managedDeps.clear(); pendingProps.clear()
-        needed.clear(); visited.clear(); queuedPriority.clear()
-        queue.clear(); diagnostics.clear()
-        seq = 0; loads = 0; rootCoords = null
-    }
-
     private fun fetchPom(coords: Coordinates): PomDocument? {
         val key = coords.toString()
         ctx.pomCache[key]?.let { return it }
@@ -87,7 +82,7 @@ class ResolutionSession(private val ctx: ResolutionContext) {
             is FetchResult.Success -> try {
                 val pom = PomParser.parse(res.body)
                 ctx.pomCache[key] = pom
-                loads++
+                ctx.loads++
                 pom
             } catch (e: Exception) {
                 fetchFailed("Parse error: ${e.message}", coords, FetchStatus.OTHER)
@@ -101,17 +96,18 @@ class ResolutionSession(private val ctx: ResolutionContext) {
         }
     }
 
-    private fun loadBuiltInProperties(pom: PomDocument, coords: Coordinates) {
-        properties.also {
-            it.putIfAbsent("project.groupId", coords.groupId)
-            it.putIfAbsent("project.artifactId", coords.artifactId)
-            it.putIfAbsent("project.version", coords.version)
-            pom.parent?.let { p ->
-                it.putIfAbsent("project.parent.groupId", p.groupId)
-                it.putIfAbsent("project.parent.artifactId", p.artifactId)
-                it.putIfAbsent("project.parent.version", p.version)
-            }
+    private fun loadBuiltInProperties(pom: PomDocument, coords: Coordinates): Map<String, String> {
+        val props = mutableMapOf(
+            "project.groupId" to coords.groupId,
+            "project.artifactId" to coords.artifactId,
+            "project.version" to coords.version
+        )
+        pom.parent?.let { p ->
+            props["project.parent.groupId"] = p.groupId
+            props["project.parent.artifactId"] = p.artifactId
+            props["project.parent.version"] = p.version
         }
+        return props
     }
 
     private fun processPomContent(pom: PomDocument, coords: Coordinates) {
@@ -122,19 +118,23 @@ class ResolutionSession(private val ctx: ResolutionContext) {
             }
         }
         for (dep in pom.managedDependencies.value) {
-            if (dep.key in managedDeps) continue
-            val entry = ManagedEntry(dep.version, dep.scope, coords)
-            managedDeps[dep.key] = entry
+            if (dep.key in localDM) continue
+            val entry = ManagedEntry(dep.version, dep.scope, coords, depth)
 
-            if (dep.version != null && PropertyExpander.containsUnresolved(dep.version))
-                registerSlot(SlotRef(dep.key, Field.VERSION, dep.version))
-            else
-                entry.resolvedVersion = dep.version
+            ctx.winnerDeps[dep.key]?.let {
+                if (it.depth <= depth)
+                    localDM[dep.key] = it
+            } ?: run { localDM[dep.key] = entry }
 
-            if (dep.scope != null && PropertyExpander.containsUnresolved(dep.scope))
-                registerSlot(SlotRef(dep.key, Field.SCOPE, dep.scope))
-            else
-                entry.resolvedScope = dep.scope
+            localDM[dep.key]?.rawVersion?.let {
+                if (PropertyExpander.containsUnresolved(it))
+                    registerSlot(SlotRef(dep.key, Field.VERSION, it))
+            } ?: localDM[dep.key]?.let { it.resolvedVersion = it.rawVersion }
+
+            localDM[dep.key]?.rawScope?.let {
+                if (PropertyExpander.containsUnresolved(it))
+                    registerSlot(SlotRef(dep.key, Field.SCOPE, it))
+            } ?: localDM[dep.key]?.let { it.resolvedScope = it.rawScope }
         }
     }
 
@@ -153,11 +153,11 @@ class ResolutionSession(private val ctx: ResolutionContext) {
         coords: Coordinates
     ) {
         if (importLevel >= ctx.limits.maxImportDepth) {
-            if (pom.imports.value.isNotEmpty())
+            if (pom.imports.isNotEmpty())
                 limitExceeded("Import depth limit reached for $coords", coords)
             return
         }
-        for (imp in pom.imports.value) {
+        for (imp in pom.imports) {
             enqueueImport(imp, coords, importLevel)
         }
     }
@@ -168,7 +168,7 @@ class ResolutionSession(private val ctx: ResolutionContext) {
         importLevel: Int
     ) {
         if (imp.version == null) {
-            diagnostics.add(
+            ctx.diagnostics.add(
                 Diagnostic.ImportUnresolved(
                     "Import ${imp.key} with no version in $coords", coords
                 )
@@ -177,7 +177,7 @@ class ResolutionSession(private val ctx: ResolutionContext) {
         }
         val c = expandCoords(imp.groupId, imp.artifactId, imp.version)
         if (c == null)
-            diagnostics.add(
+            ctx.diagnostics.add(
                 Diagnostic.ImportUnresolved(
                     "Failed to resolve coordinates for import ${imp.key} in $coords",
                     coords
@@ -201,7 +201,7 @@ class ResolutionSession(private val ctx: ResolutionContext) {
             }
             val c = expandCoords(p.groupId, p.artifactId, p.version)
             if (c == null)
-                diagnostics.add(
+                ctx.diagnostics.add(
                     Diagnostic.ParentUnresolved(
                         "Failed to resolve parent coordinates for $coords",
                         coords
@@ -252,7 +252,7 @@ class ResolutionSession(private val ctx: ResolutionContext) {
             applySlot(slot, expanded); return
         }
         val missing = PropertyExpander.findFirstMissing(slot.rawText, properties) ?: run {
-            diagnostics.add(
+            ctx.diagnostics.add(
                 Diagnostic.PropertyUnresolved(
                     "Impossible to resolve property chain for ${slot.key}: ${slot.rawText}",
                     rootCoords, slot.rawText
@@ -276,7 +276,8 @@ class ResolutionSession(private val ctx: ResolutionContext) {
     }
 
     private fun applySlot(slot: SlotRef, expanded: String) {
-        val entry = managedDeps[slot.key] ?: return
+        val entry = localDM[slot.key] ?: return
+
         when (slot.field) {
             Field.VERSION -> entry.resolvedVersion = expanded
             Field.SCOPE -> entry.resolvedScope = expanded
@@ -288,21 +289,21 @@ class ResolutionSession(private val ctx: ResolutionContext) {
             directDeps.separateEither { finalizeDependency(it, root) }
 
         for ((prop, slots) in pendingProps) {
-            diagnostics.add(
+            ctx.diagnostics.add(
                 Diagnostic.PropertyUnresolved(
                     "Property '$prop' is not resolved (${slots.size} places)",
                     root, prop
                 )
             )
         }
-        return ResolutionResult(resolved, unresolved, diagnostics)
+        return ResolutionResult(resolved.filter {it.scope == "compile"}, unresolved.filter {it.scope == "compile"})
     }
 
     private fun finalizeDependency(
         dep: Dependency,
         root: Coordinates,
     ): Either<Dependency, ResolvedDependency> {
-        val entry = managedDeps[dep.key]
+        val entry = localDM[dep.key]
 
         var resolvedVersion: String? = null
         var versionSource: VersionSource? = null
@@ -338,11 +339,11 @@ class ResolutionSession(private val ctx: ResolutionContext) {
         else Either.Left(dep)
     }
 
-    private fun limitExceeded(msg: String, coords: Coordinates) =
-        diagnostics.add(
+    private fun limitExceeded(msg: String, coords: Coordinates?) =
+        ctx.diagnostics.add(
             Diagnostic.LimitExceeded(msg, coords)
         )
 
     private fun fetchFailed(msg: String, coords: Coordinates, status: FetchStatus) =
-        diagnostics.add(Diagnostic.FetchFailed(msg, coords, status))
+        ctx.diagnostics.add(Diagnostic.FetchFailed(msg, coords, status))
 }
