@@ -1,7 +1,7 @@
-package dev.keikuethas.dependencies.mavenresolver
+package dev.keikuethas.dependencies
 
 object PropertyExpander {
-    fun containsUnresolved(raw: String): Boolean = raw.contains("\${")
+    fun containsUnresolved(raw: String): Boolean = raw.contains($$"${")
 
     fun tryExpand(raw: String, props: Map<String, String>, visiting: MutableSet<String> = mutableSetOf()): String? {
         val sb = StringBuilder()
@@ -27,7 +27,11 @@ object PropertyExpander {
         return sb.toString()
     }
 
-    fun findFirstMissing(raw: String, props: Map<String, String>, visiting: MutableSet<String> = mutableSetOf()): String? {
+    fun findFirstMissing(
+        raw: String,
+        props: Map<String, String>,
+        visiting: MutableSet<String> = mutableSetOf()
+    ): String? {
         var i = 0
         while (i < raw.length) {
             if (i + 1 < raw.length && raw[i] == '$' && raw[i + 1] == '{') {

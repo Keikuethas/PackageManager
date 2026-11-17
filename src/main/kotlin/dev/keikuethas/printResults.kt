@@ -1,36 +1,44 @@
 package dev.keikuethas
 
 import dev.keikuethas.dependencies.Diagnostic
-import dev.keikuethas.dependencies.ResolutionResult
-import dev.keikuethas.dependencies.VersionSource
+import dev.keikuethas.dependencies.Graph
 
-fun printResults(results: Map<Configuration, ResolutionResult>) {
+fun printResults(results: Map<Configuration, Pair<Graph, List<Diagnostic>>>) {
     for ((cfg, result) in results) {
-        println("\n=== ${cfg.packageName}  (${cfg.repositoryType}, ${cfg.address}) ===")
-
-        if (result.resolved.isEmpty() && result.diagnostics.isNotEmpty()) {
-            println("  Could not get dependencies:")
-            result.diagnostics.forEach { d -> println("    ⚠ ${d.message}${d.coords?.let { " @$it" } ?: ""}") }
-            continue
+        if (!cfg.tree) continue
+        val (graph, diagnostics) = result
+        println("=== ${cfg.packageName} ===")
+        if (diagnostics.isNotEmpty()) {
+            println("= Diagnostics =")
+            println()
+            printDiagnostics(diagnostics)
+            println()
         }
+        println("= Graph =")
+        println()
+        printTree(graph, 1)
+        println()
+        println()
+    }
+}
 
-        for (dep in result.resolved) {
-            val src = when (val s = dep.versionSource) {
-                is VersionSource.Explicit -> "explicit"
-                is VersionSource.Managed  -> "managed by ${s.source}"
-            }
-            println("  ${dep.groupId}:${dep.artifactId}:${dep.resolvedVersion}  [${dep.scope}]  <- $src")
-        }
+private fun printDiagnostics(ds: List<Diagnostic>) {
+    for(d in ds) {
+        println(d.message)
+        println()
+    }
+}
 
-        if (result.unresolved.isNotEmpty()) {
-            println("  not resolved (${result.unresolved.size}):")
-            result.unresolved.forEach { d -> println("    ? ${d.groupId}:${d.artifactId}") }
-        }
-
-        val nonFetchDiagnostics = result.diagnostics.filterNot { it is Diagnostic.FetchFailed }
-        if (nonFetchDiagnostics.isNotEmpty()) {
-            println("  warnings:")
-            nonFetchDiagnostics.forEach { d -> println("     ${d.message}") }
-        }
+private fun printTree(graph: Graph, depth: Int = 0) {
+    for ((key, value) in graph) {
+        val name = value.coordinates?.fullKey ?: key
+        print("- ".repeat(depth))
+        print(name)
+        value.nodes?.let {
+            if (it.isNotEmpty()) {
+                println(" -> ")
+                printTree(it, depth+1)
+            } else println()
+        } ?: println()
     }
 }

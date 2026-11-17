@@ -1,5 +1,6 @@
 @echo off
 setlocal
+set "ORIGINAL_DIR=%CD%"
 pushd "%~dp0"
 
 set "EXE_PATH=build\jpackage\PackageManager\PackageManager.exe"
@@ -16,5 +17,5 @@ if not exist "%EXE_PATH%" (
 )
 
 :: Запускаем exe, передавая ему ВСЕ аргументы, которые передали этому bat-файлу (%*)
-"%EXE_PATH%" %*
+"%EXE_PATH%" --dir "%ORIGINAL_DIR%" %*
 popd
